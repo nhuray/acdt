@@ -1,0 +1,286 @@
+#!/bin/bash
+#
+# ACDT project functions for acdt-project script
+#
+# Copyright (c) 2008 Nicolas Huray
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 3. Neither the name of the author nor the names of other contributors
+#    may be used to endorse or promote products derived from this software
+#    without specific prior written permission.
+#	
+# THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+
+# Check if lib exists
+if [ -f /usr/local/lib/acdt/acdt-commons-functions ]; then
+   . /usr/local/lib/acdt/acdt-commons-functions
+else
+   echo "[ERROR] Unable to load acdt-commons-functions. Please reinstall acdt"
+   exit 1
+fi
+
+
+###################################################################################################################
+# print_usage function : Print usage of the acdt-project script
+print_usage() {
+  log_notice "Usage:"
+  log_notice "   acdt-project {[copy] | [create] | [edit] | [delete] | [list] | [print]} <project>\n"
+  log_notice "Samples:"
+  log_notice "   acdt-project copy my-project new-project  # Copy configuration file of project 'my-project' to 'new-project'"
+  log_notice "   acdt-project create my-project            # Create configuration file of project 'my-project'"
+  log_notice "   acdt-project edit my-project              # Edit configuration file of project 'my-project'"
+  log_notice "   acdt-project delete my-project            # Delete configuration file of project 'my-project'"
+  log_notice "   acdt-project list                         # List configured projects"
+  log_notice "   acdt-project print my-project             # Print configuration file of project 'my-project'"
+  exit 0
+}
+
+###################################################################################################################
+# list_existing_projects : List existing projects configuration
+list_existing_projects(){
+   projects=`ls "$acdt_projects_dir" | grep 'project.conf$' | sed s/\-project\.conf//g | tr '\n' ' '`
+   if [ -n "$projects" ]; then
+      log_info "List of existing projects : $projects"
+   else
+      log_warn "No projects are configured. Please create your project with the command : acdt-project create my-project"
+   fi
+}
+
+
+###################################################################################################################
+# copy_existing_projects : Copy existing projects configuration
+copy_existing_projects(){
+   project=$1
+   new_project=$2
+   # Check if project does not exit
+   exist=$(is_project_exist $project)
+   if [ "false" = "$exist" ]; then
+      log_error "The project '$project' doesn't exists. Please check your entry..."
+      # List of existing projects
+      list_existing_projects
+      exit 1   
+   fi
+   # Copy configuration
+   cp -f $acdt_projects_dir/$project-project.conf $acdt_projects_dir/$new_project-project.conf
+   # Replace project name in new project configuration file
+   sed -i "s/$project/$new_project/g"  "$acdt_projects_dir/$new_project-project.conf"   
+}
+
+###################################################################################################################
+# create_project_configuration function : Create project configuration file passed in parameter
+create_project_configuration(){
+  project="$1"
+  # Check if project does not exit
+  exist=$(is_project_exist $project)
+  if [ "true" = "$exist" ]; then
+     log_error "The project '$project' still exists. Please edit '$project' project configuration with the command : acdt-project edit $project"
+     # List of existing projects
+     list_existing_projects
+     exit 1   
+  fi
+  # Create project configuration file based on template
+  create_conf_from_template $acdt_project_template $acdt_projects_dir/$project-project.conf
+}
+
+# create_conf_from_template function : create project configuration from template
+create_conf_from_template(){
+  template_file=$1
+  file_to_create=$2
+  # Create project configuration file based on template
+  file_content=$(cat $acdt_project_template | sed -e 's/"/\\"/g' |  sed -e "s/\([&<';#()*]\\)/\\\\\\1/g" |  sed -ne ':a' -e '$ s/\n/\\\\n/gp;N;b a')
+  eval echo -ne "$file_content" > "$file_to_create"
+}
+
+###################################################################################################################
+# edit_project_configuration function : Edit project configuration file passed in parameter
+edit_project_configuration(){
+  project=$1
+  # Check if project configuration file exist  
+  exist=$(is_project_exist $project)
+  if [ "false" = "$exist" ]; then
+     log_error "The project '$project' doesn't exists. Please check your entry..."
+     # List of existing projects
+     list_existing_projects
+     exit 1
+  fi
+  # Edit with default editor if defined
+  if [ -n "$EDITOR" ]; then
+    "$EDITOR" $acdt_projects_dir/$project-project.conf
+  else
+    /usr/bin/vi $acdt_projects_dir/$project-project.conf
+  fi
+}
+
+###################################################################################################################
+# delete_project_configuration function : Delete project configuration file passed in parameter
+delete_project_configuration(){
+  project=$1
+  exist=$(is_project_exist $project)
+  if [ "false" = "$exist" ]; then
+     log_error "The project '$project' doesn't exists. Please check your entry..."
+     # List of existing projects
+     list_existing_projects
+     exit 1
+  fi
+
+  echo "Are you sure you want to delete the project '$project' ? [Y/n]:"
+  read answer
+ 
+  case "x$answer" in
+    x|xy|xY|xYes|xyes)			
+       rm -f $acdt_projects_dir/$project-project.conf;;
+    *);;
+  esac
+}
+
+###################################################################################################################
+# print_project_configuration function : Construct a tree of properties for project passed in parameter
+print_project_configuration(){
+  project=$1
+  exist=$(is_project_exist $project)
+  if [ "false" = "$exist" ]; then
+     log_error "The project '$project' doesn't exists. Please check your entry..."
+     # List of existing projects
+     list_existing_projects
+     exit 1
+  fi
+
+  # Load project configuration
+  load_project_configuration $project
+
+  # Get the list of all properties
+  properties=$(get_properties_keys "$project" | sed  '/components/d' | sed '/environments/d' | sort -nr)
+  # Get components
+  components_var=$(eval_property "components")
+  if [ -z "$components_var" ]; then
+     log_error "You have to defined at least one component in your configuration file.\nPlease edit '$project' project configuration with the command : acdt-project edit $project"
+     exit 1
+  fi
+  components_list=$(echo "$components_var" | sed 's/,/\n/g' | sort -nr)
+
+  # Iterate over components
+  for component in $components_list
+  do
+    # Search if specific environments exist for this component
+    environments_var=$(eval_property "environments")
+    if [ -z "$environments_var" ]; then
+       log_error "You have to defined at least one environment in your configuration file.\nPlease edit '$project' project configuration with the command : acdt-project edit $project"
+       exit 1
+    fi
+    environments_list=$(echo "$environments_var" | sed 's/,/\n/g' | sort -nr)  
+    unset comp_buffer
+    # Iterate over environments
+    for environment in $environments_list
+    do
+        unset env_buffer
+	# Iterate over properties defined for environment
+        for property in $properties
+        do
+          # Search property defined for this component AND for an environment
+          property_key="$component"_"$environment"_"$property"
+          property_key=$(echo "$property_key" | tr "-" "_")
+          property_value=$(get_property "$project" "$property_key")
+          if [ -n "$property_value" ]; then
+             env_buffer="[INFO]             |_ $property : $property_value\n$env_buffer"
+	  else
+	      # Search property defined for an environment
+              property_key="$environment"_"$property"
+              property_key=$(echo "$property_key" | tr "-" "_")	
+              property_value=$(get_property  "$project" "$property_key")
+              if [ -n "$property_value" ]; then
+                  env_buffer="[INFO]             |_ $property : $property_value\n$env_buffer"  
+	      fi
+          fi
+
+	  # Set a dynamic variable for this property
+          tmp=$(eval echo "\${env_$property}")
+          if [ -z "$tmp" ]; then
+             tmp=1
+          fi
+          if [ -n "$property_value" ]; then
+  	    eval "env_$property=$(expr 1 \& $tmp)"
+          else
+            eval "env_$property=$(expr 0 \& $tmp)"
+	  fi
+        done # End loop on properties
+
+        # Display environmemt
+        if [ -n "$env_buffer" ]; then
+           comp_buffer="[INFO]          \_ $environment : \n$env_buffer$comp_buffer"
+        fi
+    done # End loop on environments
+
+    if [ -n "$environments_var" ]; then
+       comp_buffer="[INFO]       |_ Environments : $environments_var\n$comp_buffer"
+    fi
+
+    # Iterate over properties defined for a component
+    for property in $properties
+    do
+      property_key="$component"_"$property"
+      property_key=$(echo "$property_key" | tr "-" "_")
+      property_value=$(get_property "$project" "$property_key")
+      # Get value of dynamic variable set previously
+      env_property=$(eval echo "\${env_$property}")
+      tmp=$(eval echo "\${comp_$property}")
+      if [ -z $tmp ]; then
+         tmp=1
+      fi
+      if [ -n "$property_value" -a "$env_property" = 0 ]; then
+         comp_buffer="[INFO]       |_ $property : $property_value\n$comp_buffer"
+      fi
+
+      if [ -n "$property_value" ]; then
+         eval "comp_$property=$(expr 1 \& $tmp )"
+      else
+         eval "comp_$property=$(expr 0 \& $tmp )"
+      fi
+    done  # End loop on properties
+    # Display component
+    if [ -n "$comp_buffer" ]; then
+      project_buffer="[INFO]    \_ $component : \n$comp_buffer$project_buffer"
+    fi
+  done  # End loop on components
+
+  if [ -n "$components_var" ]; then
+    project_buffer="[INFO] |_ Components : $components_var\n$project_buffer"
+  fi
+
+  # Search property defined for project
+  for property in $properties
+  do
+    property_key="$property"		
+    property_value=$(get_property "$project" "$property_key")
+    # Get value of dynamic variable set previously
+    comp_property=$(eval echo "\${comp_$property}")
+    if [ -z "$comp_property" ]; then
+       comp_property=0
+    fi
+    if [ -n "$property_value" -a  "$comp_property" = 0 ]; then
+         project_buffer="[INFO] |_ $property : $property_value\n$project_buffer"
+    fi
+  done
+
+  # Display project
+  project_buffer="[INFO] Project : $1\n$project_buffer"
+  echo -e "$project_buffer"
+}
+

@@ -1,0 +1,58 @@
+Description: Upstream changes introduced in version 0.1.13-1
+ This patch has been created by dpkg-source during the package build.
+ Here's the last changelog entry, hopefully it gives details on why
+ those changes were made:
+ .
+ acdt (0.1.13-1) experimental; urgency=low
+ .
+   * Initial release.
+   * This is my first debian package \o/
+   * Refactoring data structure and creating a Makefile to be installation
+     compliant
+ .
+ The person named in the Author field signed this changelog entry.
+Author: Richard Kemp <richard@kemp.fr>
+
+---
+The information above should follow the Patch Tagging Guidelines, please
+checkout http://dep.debian.net/deps/dep3/ to learn about the format. Here
+are templates for supplementary fields that you might want to add:
+
+Origin: <vendor|upstream|other>, <url of original patch>
+Bug: <url in upstream bugtracker>
+Bug-Debian: http://bugs.debian.org/<bugnumber>
+Bug-Ubuntu: https://launchpad.net/bugs/<bugnumber>
+Forwarded: <no|not-needed|url proving that it has been forwarded>
+Reviewed-By: <name and email of someone who approved the patch>
+Last-Update: <YYYY-MM-DD>
+
+--- acdt-0.1.13.orig/Makefile
++++ acdt-0.1.13/Makefile
+@@ -16,24 +16,22 @@ all:
+ clean:
+ 
+ install:
+-	install -o root -g root -m 2775 -d $(CONF) $(BIN) $(LIB) $(DESTDIR)/etc/bash_completion.d
++	install -o root -g root -m 2775 -d $(CONF) $(BIN) $(LIB)
+ 	install -o root -g root -m 775 bin/* $(BIN)
+ 	install -o root -g root -m 664 lib/* $(LIB)
+ 	install -o root -g root -m 2775 -d $(CONF)/projects $(CONF)/templates $(CONF)/work
+ 	install -o root -g root -m 664 files/template-project.conf $(CONF)/templates/
+-	install -o root -g root -m 664 files/acdt_completion $(DESTDIR)/etc/bash_completion.d/acdt
+ 	install -o root -g root -m 775 -d $(DESTDIR)/usr/share/doc/acdt
+ 	install -o root -g root -m 664 docs/* $(DESTDIR)/usr/share/doc/acdt
+ 
+ uninstall:
+ 	rm -f /usr/bin/acdt-*
+ 	rm -rf /usr/share/acdt
+-	rm -f /etc/bash_completion.d/acdt
+ 	rm -rf /usr/share/doc/acdt
+-	rm -f /etc/bash_completion.d/acdt
+ 
+ deb:
+-	dpkg-buildpackage -rfakeroot
++	debuild -sa
+ 
+ deb-clean:
+ 	fakeroot debian/rules clean
++	#rm -f ../$(PKG)_*

@@ -1,0 +1,17 @@
+Source: acdt
+Section: main
+Priority: extra
+Maintainer: Richard Kemp <richard@kemp.fr>
+Build-Depends: debhelper (>= 7.0.50~), bash-completion
+Standards-Version: 3.8.4
+Homepage: http://sourceforge.net/projects/acdt/
+#Vcs-Git: git://git.debian.org/collab-maint/acdt.git
+#Vcs-Browser: http://git.debian.org/?p=collab-maint/acdt.git;a=summary
+
+Package: acdt
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, bash, sed, tofrodos, openssh-client 
+Recommends: unzip, unrar
+Description: ACDT is the acronym for Applicative Component Deployment Tool. 
+ It's a set of bash scripts allowing to deploy and rollback applicative component 
+ on multiple environments with only a single configuration file

@@ -1,0 +1,8 @@
+acdt (0.1.13-1) experimental; urgency=low
+
+  * Initial release.
+  * This is my first debian package \o/
+  * Refactoring data structure and creating a Makefile to be installation
+    compliant
+
+ -- Richard Kemp <richard@kemp.fr>  Tue, 15 Mar 2011 10:47:17 +0100

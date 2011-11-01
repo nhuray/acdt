@@ -1,0 +1,276 @@
+#!/bin/bash
+#
+# ACDT rollback script
+#
+# Copyright (c) 2008 Nicolas Huray
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 3. Neither the name of the author nor the names of other contributors
+#    may be used to endorse or promote products derived from this software
+#    without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+
+# set -x to run in debug mode
+set +x
+
+# set -o errexit to prevent unexpected errors
+set -o errexit
+
+# Check if user is root
+if [ `id -u` -ne 0 ]; then
+   echo "[ERROR] You need root privileges to run this script"
+   exit 1
+fi
+
+# Check if lib exists
+if [ -f /usr/local/lib/acdt/acdt-rollback-functions ]; then
+   . /usr/local/lib/acdt/acdt-rollback-functions
+else
+   echo "[ERROR] Unable to load acdt-rollback-functions. Please reinstall acdt"
+   exit 1
+fi
+
+
+# If acdt-rollback is called without options
+if [ $# -eq 0 ]; then
+   # Load rollback file if exists
+   set +o errexit  # load_rollback_file function may be return 1 and we want to trap error code
+   load_rollback_file
+   return_code=$?
+   set -o errexit
+   
+   if [ $return_code -eq 0 ]; then 
+     # Check if previous version exists
+     if [ -z "$previous_version" ]; then
+        # Deleting rollback_file because 'previous_version' is undefined 
+        rm -f $acdt_rollback_file
+        unset project component environment servers current_version
+     else
+        # Ask for rollback this component if quiet isn't set
+        if [ -z "$quiet" ]; then
+           echo "Would you rollback component '$component' of project '$project' from version '$current_version' to version '$previous_version' on server(s) '$servers' [Y/n] ?" 
+           read answer
+        else
+           answer="yes"
+        fi
+   
+        case "x$answer" in
+           x|xy|xY|xYes|xyes) 
+               version="$previous_version" ;;
+           *)  unset project component environment servers current_version previous_version;;
+           esac   
+     fi 
+   fi
+fi
+
+# Get options and args
+get_options $@
+
+# Define project name
+get_project
+
+# Load project configuration
+load_project_configuration "$project"
+
+# Define component name
+get_component $project
+
+# Define environment
+get_environment $project
+
+# Define component version to restore
+get_version $project
+
+# Get servers
+if [ -z "$servers" ]; then
+  servers=$deploy_servers
+  if [ -z "$servers" ]; then
+    servers="localhost"
+  fi
+fi
+
+# Define current version 
+if [ -z $current_version ]; then
+   current_version="undefined"
+fi
+
+# Create a rollback report
+report="$acdt_work_dir/rollback-report.txt"
+if [ -f $report ]; then
+  run_command "rm -f $report" "Deleting $report"
+fi
+
+touch $report
+export report
+
+# Trap not-normal exit signals: 1/HUP, 2/INT, 3/QUIT, 15/TERM, 24/TPST
+trap onabort 1 2 3 15 24
+
+# Start rollback process
+###################################################################################################################
+log_info  "------------------------------------------------------------------------" | tee -a "$report"
+log_info  " Starting Rollback of component '$component' of project '$project'"       | tee -a "$report"
+log_info  " from version '$current_version' to '$version' on server(s) '$servers'"   | tee -a "$report"
+log_info  "------------------------------------------------------------------------" | tee -a "$report"
+log_debug " deploy_dir        : $deploy_dir"                                         | tee -a "$report"
+log_debug " deploy_symlink    : $deploy_symlink"                                     | tee -a "$report"
+log_debug " pre_rollback_task : $pre_rollback_task"                                  | tee -a "$report"
+log_debug " post_deploy_task  : $post_rollback_task"                                 | tee -a "$report"
+log_debug " report_task       : $report_task"                                        | tee -a "$report"
+log_debug "------------------------------------------------------------------------" | tee -a "$report"
+
+###################################################################################################################
+
+# Before rollback , check if deploy_dir is versionned
+if [ "false" != "$unpack_archive"  -a "${deploy_dir##/*/}" != "$version" ]; then
+   log_warn "Deploy directory isn't versionned"                                      | tee -a "$report"
+   deploy_dir=$deploy_dir/$version
+fi
+
+# Iterate on servers to ROLLBACK
+servers=$(echo $servers | sed 's/,/ /g')
+server_count=$(echo $servers | wc -w )
+IFS=$' '
+for server in $servers
+do
+   # Define if deploy is local or remote
+   is_local=$(is_localhost "$server")
+   if [ "true" = "$is_local" ]; then
+     unset ssh_command
+     unset on_server
+   else
+     ssh_command="ssh $server"
+     on_server="on server '$server'"
+     set +o errexit # ssh may be return 1 and we want to trap error code
+     status_message=$(ssh -o PreferredAuthentications=publickey $server hostname 2>&1)
+     status_code=$?
+     set -o errexit
+     
+     if [ "$status_code" != 0 ]; then
+       log_warn "Authentication failure by publickey $on_server : $status_message" | tee -a "$report"
+       identity_file=~/.ssh/id_dsa.pub
+
+       # Check if public key exists
+       if [ ! -f $identity_file ]; then 
+          echo "Would you create a ssh public key (dsa)[Y/n] ?"
+          read answer
+          
+          case "x$answer" in
+             x|xy|xY|xYes|xyes)
+                run_command "ssh-keygen -t dsa" "Creating ssh public key";; 
+             *) onabort;;
+          esac
+       fi
+       
+       echo "Would you copy ssh public key $on_server [Y/n] ?"
+       read answer
+
+       case "x$answer" in
+          x|xy|xY|xYes|xyes)
+             run_command "ssh-copy-id -i $identity_file $server" "Copying ssh public key $on_server";; 
+          *) onabort;;
+       esac
+     fi
+   fi
+
+   # Check if symbolic link exist and is readeable
+   set +o errexit # readlink may be return 1 if any link exist
+   current_release=$($ssh_command readlink $deploy_symlink)
+   set -o errexit
+   
+   if [ -z "$current_release" ]; then
+      log_error "Release '$version' or symbolic link doesn't exist $on_server" | tee -a "$report"
+      onerror
+   fi
+   
+   # Check if the previous_version exist
+   if [ "false" != "$unpack_archive" ]; then
+      current_version=${current_release##/*/}
+   else
+      current_version=$($ssh_command basename "$current_release"  | sed -e "s/^$project-$component-\(.*\)\.\($supported_archive_formats\)$/\1/g")
+   fi 
+   
+   set +o errexit # this section may be return != 0 
+   version_exist=$($ssh_command ls "$deploy_dir" | grep "^$project-$component-$version\.\($supported_archive_formats\)$")
+   if [ -n "$version_exist" ]; then
+      rollback_dir="$deploy_dir/$version_exist"
+   else
+      version_exist=$($ssh_command ls ${deploy_dir%/*} | grep "$version" )
+      rollback_dir=${deploy_dir%/*}/$version
+   fi
+   set -o errexit
+   
+   # Check if version specified exists
+   if [ -z "$version_exist" ]; then
+     log_error "Version '$version' doesn't exists $on_server" | tee -a "$report"
+     rm -f $acdt_rollback_file
+     onerror 
+   fi
+
+   if [ -z "$quiet" -a $server_count -gt 1 ]; then
+      echo "Would you rollback component '$component' of project '$project' from version '$current_version' to version '$previous_version' $on_server [Y/n] ?" 
+      read answer
+   else
+      answer="yes"
+   fi
+
+   if [ -z "$servers_to_rollback" ]; then 
+    servers_to_rollback="$servers"
+   fi
+
+   case "x$answer" in
+       x|xy|xY|xYes|xyes)
+
+          # Pre-rollback task
+          if [ -n "$pre_rollback_task" ]; then
+             log_notice "[rollback:pre_rollback]"                        | tee -a "$report"
+             log_info "Launching pre-rollback task : $pre_rollback_task" | tee -a "$report"
+             run_command "$ssh_command $pre_rollback_task"
+          fi
+
+          log_notice "[rollback:rollback]" | tee -a "$report"
+          run_command "$ssh_command rm -fr $deploy_symlink" "Removing symbolic link $deploy_symlink $on_server"
+          run_command "$ssh_command ln -fs $rollback_dir $deploy_symlink" "Creating symbolic link $deploy_symlink on $rollback_dir/$archive $on_server"
+
+          # Remove server from list of servers to rollback
+          export servers_to_rollback=$(echo "$servers_to_rollback" | sed "s/$server\s\{0,1\}//g" )
+          sed -i "s/servers=.*/servers=$servers_to_rollback/g" $acdt_rollback_file
+                    
+          # Post-rollback task
+          if [ -n "$post_rollback_task" ]; then
+             log_notice "[deploy:post_rollback]"                           | tee -a "$report"
+             log_info "Launching post-rollback task : $post_rollback_task" | tee -a "$report"
+             run_command "$ssh_command $post_rollback_task"
+          fi
+         ;;
+     *) 
+  	log_warn "No rollback has been performed $on_server. Current version is still $current_version" | tee -a "$report";;
+   esac
+done
+unset IFS
+
+# Removing rollback file if all servers will be rollbacked
+if [ -z "$servers_to_rollback" ]; then
+   rm -f $acdt_rollback_file
+fi
+
+onsuccess

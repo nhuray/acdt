@@ -1,0 +1,36 @@
+ACDT : Applicative Component Deployment Tool
+============================================
+
+ * Introduction
+ 
+ACDT is the acronym for Applicative Component Deployment Tool.
+It's a set of bash scripts allowing to deploy and rollback applicative component
+with only a single configuration file.
+
+ACDT is composed of 3 scripts :
+  - acdt-project  : Setup a new configuration file for a project
+  - acdt-deploy   : Deploy component bind to the project
+  - acdt-rollback : Rollback component installed with acdt-deploy
+
+
+ * Build ACDT as Debian Package
+
+ You can use the script build.sh to build acdt as debian package.
+ After checkout project on unix system :
+    - change right on build.sh : chmod +x build.sh
+    - change file in unix format if necessary : dos2unix build.sh
+    - execute build.sh : ./build.sh  
+
+ * Install on Debian system
+
+ After building acdt as debian package, deb file is in binaries directory.
+ To install it on debian system, just do that :
+    - dpkg -i acdt_X.X_all.deb
+
+
+
+ * Build ACDT as Red Hat/Fedora RPM Package
+ 
+ * Install on Red Hat/Fedora system
+ 
+ 

@@ -1,0 +1,371 @@
+#!/bin/bash
+#
+# ACDT deploy script
+#
+# Copyright (c) 2008 Nicolas Huray
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 3. Neither the name of the author nor the names of other contributors
+#    may be used to endorse or promote products derived from this software
+#    without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+
+# set -x to run in debug mode
+set +x
+
+# set -o errexit to prevent unexpected errors
+set -o errexit
+
+# Check if user is root
+if [ `id -u` -ne 0 ]; then
+   echo "[ERROR] You need root privileges to run this script"
+   exit 1
+fi
+
+# Check if lib exists
+if [ -f /usr/local/lib/acdt/acdt-deploy-functions ]; then
+   . /usr/local/lib/acdt/acdt-deploy-functions
+else
+   echo "[ERROR] Unable to load acdt-deploy-functions. Please reinstall acdt"
+   exit 1
+fi
+
+# Get options and args
+get_options $@
+
+# Try to define project, component and version from archive name
+if [ -n "$archive" ]; then
+   load_configuration_from_archive "$archive"
+fi
+
+# Define project name
+get_project
+
+# Load project configuration
+load_project_configuration "$project"
+
+# Define component name
+get_component "$project"
+
+# Define environment
+get_environment "$project"
+
+# Define component version
+get_version "$project"
+
+# Get archive 
+get_archive "$archives_dir"
+
+# Delete old report if exists
+mkdir -p "$reports_dir"
+report="$reports_dir/$project-$component-$version.txt"
+if [ -f "$report" ]; then
+  rm -f "$report"
+fi
+
+touch "$report"
+export report
+
+# Reload project configuration to reevaluate all variables
+load_project_configuration "$project"
+
+# Get servers
+if [ -z "$servers" ]; then
+  servers="$deploy_servers"
+  if [ -z "$servers" ]; then
+    servers="localhost"
+  fi
+fi
+
+# Check if deploy_dir is set
+if [ -z "$deploy_dir" ]; then
+   log_error "You have to defined a directory to deploy your releases"
+   exit 1
+fi
+
+# Check if archives_dir is set and created
+if [ -z "$archives_dir" ]; then
+   log_error "You have to defined a directory to store archives"
+   exit 1
+elif [ ! -d "$archives_dir" ]; then
+  mkdir -p $archives_dir
+fi
+
+# Check if reports_dir is set and created
+if [ -z "$reports_dir" ]; then
+   log_error "You have to defined a directory to store reports"
+   exit 1
+elif [ ! -d "$reports_dir" ]; then
+  mkdir -p $reports_dir
+fi
+
+# Trap not-normal exit signals: 1/HUP, 2/INT, 3/QUIT, 15/TERM, 24/TPST
+trap onabort 1 2 3 15 24
+
+# Start deployment process
+###################################################################################################################
+log_info  "------------------------------------------------------------------------" | tee -a "$report"
+log_info  " Starting Deployment of component '$component' of project '$project'"     | tee -a "$report"
+log_info  " in version '$version' for environment '$environment' on server(s) '$servers'"  | tee -a "$report"
+log_info  "------------------------------------------------------------------------" | tee -a "$report"
+log_debug " archives_dir     : $archives_dir"                                        | tee -a "$report"
+log_debug " build_task       : $build_task"                                          | tee -a "$report"
+log_debug " deploy_dir       : $deploy_dir"                                          | tee -a "$report"
+log_debug " deploy_servers   : $deploy_servers"                                      | tee -a "$report"
+log_debug " deploy_symlink   : $deploy_symlink"                                      | tee -a "$report"
+log_debug " dir_chmod        : $dir_chmod"                                           | tee -a "$report"
+log_debug " dir_chown        : $dir_chown"                                           | tee -a "$report"
+log_debug " file_chmod       : $file_chmod"                                          | tee -a "$report"
+log_debug " file_chown       : $file_chown"                                          | tee -a "$report"
+log_debug " keep_archives    : $keep_archives"                                       | tee -a "$report"
+log_debug " keep_releases    : $keep_releases"                                       | tee -a "$report"
+log_debug " keep_reports     : $keep_reports"                                        | tee -a "$report"
+log_debug " log_dir          : $log_dir"                                             | tee -a "$report"
+log_debug " post_deploy_task : $post_deploy_task"                                    | tee -a "$report"
+log_debug " pre_deploy_task  : $pre_deploy_task"                                     | tee -a "$report"
+log_debug " reports_dir      : $reports_dir"                                         | tee -a "$report"
+log_debug " report_task      : $report_task"                                         | tee -a "$report"
+log_debug " scm_task         : $scm_task"                                            | tee -a "$report"
+log_debug " unpack_archive   : $unpack_archive"                                      | tee -a "$report"
+log_debug " work_dir         : $work_dir"                                            | tee -a "$report"
+log_debug "------------------------------------------------------------------------" | tee -a "$report"
+
+
+# If no archive exists in archives_dir or no selected -> SCM and BUILD Tasks
+###################################################################################################################
+if [ -z "$archive" ]; then
+   if [ -d "$work_dir" ]; then  
+     run_command "rm -fr $work_dir" "Deleting directory $work_dir"
+   fi
+   run_command "mkdir -p $work_dir" "Creating directory $work_dir"
+   cd $work_dir  
+
+   # Scm task
+   if [ -n "$scm_task" ]; then
+      log_notice "[deploy:scm]"                                                      | tee -a "$report"
+      log_info "Launching SCM Task : $scm_task"                                      | tee -a "$report"
+      run_command "$scm_task"
+   else 
+     log_warn "No scm task are defined"                                              | tee -a "$report"
+   fi
+
+   # Build task
+   if [ -n "$build_task" ]; then
+      log_notice "[deploy:build]"                                                    | tee -a "$report"
+      log_info "Launching Build Task : $build_task"                                  | tee -a "$report"
+      run_command "$build_task"
+      
+      # Now search if a new archive was created and move on archives_dir
+      get_archive "$archives_dir"
+      
+      # If not, try to search archive in current directory and move it in archives_dir
+      if [ -z "$archive" ]; then
+         move_archive `pwd`
+      fi
+   else
+     log_error "No build task are defined"                                            | tee -a "$report"
+     onerror
+   fi
+fi 			
+
+
+# Before deployment , check if deploy_dir is versionned
+if [ "false" != "$unpack_archive"  -a "${deploy_dir##/*/}" != "$version" ]; then
+   log_warn "Deploy directory isn't versionned"                                      | tee -a "$report"
+   deploy_dir=$deploy_dir/$version
+fi
+
+###################################################################################################################
+# Iterate on servers to DEPLOY
+successful_servers=""
+servers=$(echo $servers | sed 's/,/ /g')
+server_count=$(echo $servers | wc -w )
+IFS=$' '
+for server in $servers
+do
+   # Define if deployment is local or remote
+   is_local=$(is_localhost "$server")
+   if [ "true" = "$is_local" ]; then
+     unset ssh_command
+     unset on_server
+     unset slash
+   else
+     ssh_command="ssh $server"
+     on_server="on server '$server'"
+     slash='\'
+     set +o errexit # ssh may be return 1 and we want to trap error code
+     status_message=$(ssh -o PreferredAuthentications=publickey $server hostname 2>&1)
+     status_code=$?
+     set -o errexit
+     if [ "$status_code" != 0 ]; then
+       log_warn "Authentication failure by publickey $on_server : $status_message" | tee -a "$report"
+       identity_file=~/.ssh/id_dsa.pub
+       
+       # Check if public key exists
+       if [ ! -f $identity_file ]; then 
+          echo "Would you create an ssh public key (dsa)[Y/n] ?"
+          read answer
+          
+          case "x$answer" in
+             x|xy|xY|xYes|xyes)
+                run_command "ssh-keygen -t dsa" "Creating ssh public key";; 
+             *) onabort;;
+          esac
+       fi
+       
+       echo "Would you copy ssh public key $on_server [Y/n] ?"
+       read answer
+
+       case "x$answer" in
+          x|xy|xY|xYes|xyes)
+             run_command "ssh-copy-id -i $identity_file $server" "Copying ssh public key $on_server";; 
+          *) onabort;;
+       esac
+     fi
+   fi
+
+   if [ -z "$quiet" -a $server_count -gt 1 ]; then
+      echo "Would you deploy the archive $archive $on_server [Y/n] ?"
+      read answer
+   else
+      answer="yes"
+   fi
+	
+   case "x$answer" in
+       x|xy|xY|xYes|xyes)
+          log_notice "[deploy:install]" | tee -a "$report"
+
+          # Create applicative log directory if doesn't exists
+          if ($ssh_command test ! -d "$log_dir") then
+             run_command "$ssh_command mkdir -p $log_dir" "Creating directory $log_dir $on_server"
+          fi
+          
+          # Create deploy directory
+          if ($ssh_command test ! -d "$deploy_dir") then
+	         run_command "$ssh_command mkdir -p $deploy_dir" "Creating directory $deploy_dir $on_server"
+          else
+             run_command "$ssh_command rm -fr $deploy_dir/* " "Deleting files and directories in $deploy_dir $on_server if exists"
+          fi
+
+          # Scp archive in deploy_dir
+          if [ -n "$on_server" ]; then
+             run_command "scp $archives_dir/$archive $server:$deploy_dir" "Copying archive $archive in $deploy_dir $on_server"
+            
+             # Unpack archive in deploy directory
+             if [ "false" != "$unpack_archive" ]; then
+               run_command "ssh_unpack_archive $deploy_dir/$archive" "Uncompressing archive $archive in $deploy_dir $on_server"
+  	           # Remove archive from deploy directory
+               run_command "$ssh_command rm -f $deploy_dir/$archive" "Deleting archive $archive $on_server"
+             fi 
+          else
+             run_command "cp -f $archives_dir/$archive $deploy_dir" "Copying archive $archive in $deploy_dir"
+             # Unpack archive in deploy directory
+             if [ "false" != "$unpack_archive" ]; then
+               run_command "unpack_archive $deploy_dir/$archive" "Uncompressing archive $archive in $deploy_dir"
+  	           # Remove archive from deploy directory
+               run_command "rm -fr $deploy_dir/$archive" "Deleting archive $archive"
+             fi 
+          fi
+
+          # Chown / Chmod on deploy_dir
+          [ -n "$dir_chown" ]  && run_command "$ssh_command  find $deploy_dir -type d -exec chown $dir_chown {} $slash;" "Chown $dir_chown on $deploy_dir $on_server"
+          [ -n "$file_chown" ] && run_command "$ssh_command  find $deploy_dir -type f -exec chown $file_chown {} $slash;" "Chown $file_chown on files in directory $deploy_dir $on_server"
+          [ -n "$dir_chmod" ]  && run_command "$ssh_command  find $deploy_dir -type d -exec chmod $dir_chmod {} $slash;" "Chmod $dir_chmod on $deploy_dir $on_server"
+          [ -n "$file_chmod" ] && run_command "$ssh_command  find $deploy_dir -type f -exec chmod $file_chmod {} $slash;" "Chmod $file_chmod on files in directory $deploy_dir $on_server"
+          [ -n "$file_chmod" ] && run_command "$ssh_command  find $deploy_dir -type f -name '*.sh' -exec chmod 775 {} $slash;" "Chmod 775 on *.sh files in directory $deploy_dir $on_server"
+      
+          # Chown / Chmod on log_dir if exists
+          [ -n "$dir_chown" ]  && run_command "$ssh_command  find $log_dir -type d -exec chown $dir_chown {} $slash;" "Chown $dir_chown on $log_dir $on_server"
+          [ -n "$file_chown" ] && run_command "$ssh_command  find $log_dir -type f -exec chown $file_chown {} $slash;" "Chown $file_chown on files in directory $log_dir $on_server"
+          [ -n "$dir_chmod" ]  && run_command "$ssh_command  find $log_dir -type d -exec chmod $dir_chmod {} $slash;" "Chmod $dir_chmod on $log_dir $on_server"
+          [ -n "$file_chmod" ] && run_command "$ssh_command  find $log_dir -type f -exec chmod $file_chmod {} $slash;" "Chmod $file_chmod on files in directory $log_dir $on_server"
+
+          # Pre-deploy task
+          if [ -n "$pre_deploy_task" ]; then
+             log_notice "[deploy:pre_deploy]"                        | tee -a "$report"
+             log_info "Launching pre-deploy task : $pre_deploy_task" | tee -a "$report"
+             run_command "$ssh_command $pre_deploy_task"
+	        fi
+          
+          # Deploy task
+          log_notice "[deploy:deploy]" | tee -a "$report"
+         
+	        # Create directories to make symbolic link
+          if ($ssh_command test ! -d "${deploy_symlink%/*}") then
+             run_command "$ssh_command mkdir -p ${deploy_symlink%/*}" "Creating directory ${deploy_symlink%/*}"
+          fi
+
+          # Recreate symbolic link
+          set +o errexit # readlink may be return 1 if no link exists
+          current_release=$($ssh_command readlink $deploy_symlink)
+          set -o errexit
+           
+          if [ "false" != "$unpack_archive" ]; then
+             previous_version=${current_release##/*/}
+ 	         run_command "$ssh_command rm -fr $deploy_symlink" "Removing symbolic link $deploy_symlink $on_server"
+	         run_command "$ssh_command ln -fs $deploy_dir $deploy_symlink" "Creating symbolic link $deploy_symlink on $deploy_dir $on_server"
+             release_dir=${deploy_dir%/*}
+          else
+             if [ -z "$current_release" ]; then 
+                log_warn "No releases are already installed or symbolic link doesn't exists $on_server"  | tee -a "$report"
+             else
+                previous_version=$(basename $current_release | sed -e "s/^$project-$component-\(.*\)\.\($supported_archive_formats\)$/\1/g")
+             fi
+             run_command "$ssh_command rm -fr $deploy_symlink" "Removing symbolic link $deploy_symlink $on_server"
+	         run_command "$ssh_command ln -fs $deploy_dir/$archive $deploy_symlink" "Creating symbolic link $deploy_symlink on $deploy_dir/$archive $on_server"
+             release_dir="$deploy_dir"
+          fi 
+
+          # Add servers to list of successful deploy servers
+          if [ -z "$successful_servers" ]; then
+             successful_servers="$server"
+          else
+             successful_servers="$successful_servers $server"
+          fi
+
+          # Post-deploy task
+          if [ -n "$post_deploy_task" ]; then
+             log_notice "[deploy:post_deploy]"                         | tee -a "$report"
+             log_info "Launching post-deploy task : $post_deploy_task" | tee -a "$report"
+             run_command "$ssh_command $post_deploy_task"
+	      fi
+
+	      # Clean old release
+          run_command "ssh_clean $keep_releases $release_dir" "Cleaning old releases in $release_dir $on_server"
+          ;;
+     *) 
+  	log_warn "No archive has been deployed $on_server" | tee -a "$report";;
+   esac
+done
+unset IFS
+
+# Check if at least one server has been deployed
+if [ -z "$successful_servers" ]; then
+   onabort
+fi
+
+# Cleaning old archives and reports
+run_command "clean $keep_archives $archives_dir ^$project-$component" "Cleaning old archives in $archives_dir"
+run_command "clean $keep_reports $reports_dir ^$project-$component"   "Cleaning old deployment reports in $reports_dir"
+
+# End
+onsuccess

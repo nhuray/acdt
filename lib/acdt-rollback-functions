@@ -1,0 +1,147 @@
+#!/bin/bash
+#
+# ACDT rollback functions for acdt-deploy script
+#
+# Copyright (c) 2008 Nicolas Huray
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 3. Neither the name of the author nor the names of other contributors
+#    may be used to endorse or promote products derived from this software
+#    without specific prior written permission.
+#	
+# THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+
+# Check if lib exists
+if [ -f /usr/local/lib/acdt/acdt-commons-functions ]; then
+   . /usr/local/lib/acdt/acdt-commons-functions
+else
+   echo "[ERROR] Unable to load acdt-commons-functions. Please reinstall acdt"
+   exit 1
+fi
+
+# Export action of this script.
+# May be used as variable in project configuration
+export action="ROLLBACK"
+
+##################################################################################################################
+# print_usage function : Print usage of the acdt-rollback script
+print_usage() {
+  log_notice "Usage:"
+  log_notice "   acdt-rollback"
+  log_notice "   acdt-rollback [ARGUMENTS] [OPTIONS]\n"
+  log_notice "Arguments:"
+  log_notice "   -p|--project   <project>      Name of your project"
+  log_notice "   -c|--component <component>    Name of your applicative component"
+  log_notice "   -e|--env       <environment>  Name of environment you rollback on\n"
+  log_notice "Options:"
+  log_notice "   -v|--version   <version>      Version of component to restore"
+  log_notice "   -s|--servers   <servers>      A list of servers separate by comma"
+  log_notice "   -t|--ticket    <ticket>       A ticket number"
+  log_notice "   -X                            Debug option"
+  exit 0
+}
+
+##################################################################################################################
+# get_options function : Parse arguments and options. Long options is supported
+get_options(){
+  until [ "$1" = "" ] ; do
+   first_char="${1:0:1}"
+   if [ "$first_char" = "-" ] ; then
+     option="${1:1}"
+     case $option in
+        p|-project)   
+            shift
+            if [ -z $1 ]; then
+              print_usage 
+            fi
+            project="$1";;
+        c|-component)            
+            shift
+            if [ -z $1 ]; then
+              print_usage 
+            fi
+            component="$1";;
+        v|-version)
+            shift
+            if [ -z $1 ]; then
+              print_usage 
+            fi
+            version="$1";;
+        s|-servers)
+            shift
+            if [ -z $1 ]; then
+              print_usage 
+            fi
+            servers="$1";;
+        e|-env)       
+            shift
+            if [ -z $1 ]; then
+              print_usage 
+            fi
+            environment="$1";;
+       t|-ticket)
+             shift
+             if [ -z $1 ]; then
+               print_usage
+             fi
+             ticket="$1";;
+        h|-help)      print_usage;;
+        X)            debug="true";;
+	?)            print_usage;;
+     esac
+   else
+      print_usage
+   fi
+   shift
+ done
+}
+
+###################################################################################################################
+# load_rollback_file function : Load rollback file
+load_rollback_file(){
+   # Load rollback file if exists
+   if [ ! -f $acdt_rollback_file ]; then
+     log_info "Unable to load rollback file" 
+     return 1
+   fi
+   temp_file=/tmp/rollback.txt
+   cat $acdt_rollback_file | dos2unix | sed -re "s/'//g" | sed -e 's/"//g' | sed -re 's/=(.*)/="\1"/g'  > $temp_file
+   source $temp_file
+   rm $temp_file
+}
+
+###################################################################################################################
+# get_version function : Ask for component version and set 'version' variable
+get_version(){
+   until [ -n "$version_ok" ]
+   do
+      if [ -z "$version" ]; then
+         echo "Please specify the applicative component version to restore :"    
+         read version
+      fi
+      
+      if [ -z "$version" ]; then
+         log_warn "No version has been specified. You must specify a version to restore"    
+      else
+        version_ok="true"
+      fi
+   done
+}

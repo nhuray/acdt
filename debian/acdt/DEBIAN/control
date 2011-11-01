@@ -1,0 +1,13 @@
+Package: acdt
+Version: 0.1.13-1
+Architecture: amd64
+Maintainer: Richard Kemp <richard@kemp.fr>
+Installed-Size: 192
+Depends: bash, sed, tofrodos, openssh-client
+Recommends: unzip, unrar
+Section: main
+Priority: extra
+Homepage: http://sourceforge.net/projects/acdt/
+Description: ACDT is the acronym for Applicative Component Deployment Tool.
+ It's a set of bash scripts allowing to deploy and rollback applicative component
+ on multiple environments with only a single configuration file

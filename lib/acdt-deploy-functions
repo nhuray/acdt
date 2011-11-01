@@ -1,0 +1,363 @@
+#!/bin/bash
+#
+# ACDT deploy functions for acdt-deploy script
+#
+# Copyright (c) 2008 Nicolas Huray
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 3. Neither the name of the author nor the names of other contributors
+#    may be used to endorse or promote products derived from this software
+#    without specific prior written permission.
+#	
+# THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+
+# Check if lib exists
+if [ -f /usr/local/lib/acdt/acdt-commons-functions ]; then
+   . /usr/local/lib/acdt/acdt-commons-functions
+else
+   echo "[ERROR] Unable to load acdt-commons-functions. Please reinstall acdt"
+   exit 1
+fi
+
+# Export action of this script.
+# May be used as variable in project configuration
+export action="DEPLOY"
+
+##################################################################################################################
+# print_usage function : Print usage of the acdt-deploy script
+print_usage() {
+  log_notice "Usage:"
+  log_notice "   acdt-deploy"
+  log_notice "   acdt-deploy [ARGUMENTS] [OPTIONS]\n"
+  log_notice "Arguments:"
+  log_notice "   -p|--project   <project>      Name of your project"
+  log_notice "   -c|--component <component>    Name of your applicative component"
+  log_notice "   -e|--env       <environment>  Name of environment you deploy on\n"
+  log_notice "Options:"
+  log_notice "   -q|--quiet                    Doesn't ask confirmation question"
+  log_notice "   -v|--version   <version>      Version of component"
+  log_notice "   -s|--servers   <servers>      A list of servers separate by comma"
+  log_notice "   -a|--archive   <archive>      An archive with appropriate pattern name to deploy"
+  log_notice "   -t|--ticket    <ticket>       A ticket number"
+  log_notice "   -X                            Debug option"
+  exit 0
+}
+
+##################################################################################################################
+# get_options function : Parse arguments and options. Long options is supported
+get_options(){
+  until [ "$1" = "" ] ; do
+   local first_char="${1:0:1}"
+   if [ "$first_char" = "-" ] ; then
+     local option="${1:1}"
+     case $option in
+        a|-archive)   
+            shift
+            if [ -z $1 ]; then
+              print_usage 
+            fi
+            archive="$1";;
+        p|-project)   
+            shift
+            if [ -z $1 ]; then
+              print_usage 
+            fi
+            project="$1";;
+        c|-component)            
+            shift
+            if [ -z $1 ]; then
+              print_usage 
+            fi
+            component="$1";;
+        v|-version)
+            shift
+            if [ -z $1 ]; then
+              print_usage 
+            fi
+            version="$1";;
+        s|-servers)
+            shift
+            if [ -z $1 ]; then
+              print_usage 
+            fi
+            servers="$1";;
+        e|-env)       
+            shift
+            if [ -z $1 ]; then
+              print_usage 
+            fi
+            environment="$1";;
+        t|-ticket)    
+             shift
+             if [ -z $1 ]; then
+               print_usage
+             fi
+             ticket="$1";;
+        h|-help)      print_usage;;
+        q|-quiet)     quiet="true";;
+        X)            debug="true";;
+	?)            print_usage;;
+     esac
+   else
+      print_usage
+   fi
+   shift
+ done
+}
+
+###################################################################################################################
+# get_version function : Ask for component version and set 'version' variable
+get_version(){
+   local project="$1"
+   if [ -z "$version" -a -n "$quiet" ]; then
+     version=$datetime
+     return 0;
+   fi
+
+   if [ -z "$version" ]; then
+       if [ -z "$archives_dir" ]; then
+          log_error "You have to defined a directory to store archives"
+          exit 1
+       elif [ ! -d "$archives_dir" ]; then
+          mkdir -p $archives_dir
+       fi
+       # Define versions of archives in $archives_dir
+       local versions=$(ls "$archives_dir" | grep -e "^$project-$component-\(.*\)\.\($supported_archive_formats\)$" | sed -e "s/^$project-$component-\(.*\)\.\($supported_archive_formats\)$/\1/g" | uniq | sort | tr -s '\n' ' '  | uniq)
+       # Ask question to get version variable
+       if [ -z "$versions" ]; then 
+           echo "Please specify the applicative component version to deploy (optional) :"    
+       else
+           echo "Please specify the applicative component version to deploy (Available(s) version(s): $versions) :"
+       fi
+       read version
+
+       if [ -z "$version" ]; then
+         version=$datetime
+         log_warn "No version has been set. A timestamp is set as default version : $version."
+       fi
+   fi
+   export version
+}
+
+###################################################################################################################
+# get_archive function : Get archive with regular pattern name in directory specified
+get_archive(){
+   local directory="$1"
+   local archive_pattern_evaluated=`eval echo "$archive_pattern"`
+   archive_count=$(ls $directory | grep -e "^$archive_pattern_evaluated\.\($supported_archive_formats\)$" | wc -l) 
+   # If one or many archives exists with pattern $archive_pattern_evaluated
+   if [ $archive_count -gt 0 ]; then
+      if [ $archive_count -ne 1 ]; then
+       until [ -n "$archive" ]
+         do
+            archives=$(ls -C $directory | grep -e "^$archive_pattern_evaluated\.\($supported_archive_formats\)$")
+            echo "Please specify the archive to deploy (Availables archives: $archives) ? :"
+            read answer
+            # Check if archive exists
+            exist=$(contains "$answer" "$archives")
+            if [ "true" = "$exist" ]; then
+               archive=$answer
+            fi
+         done
+      else
+         archive=$(ls $directory | grep -e "^$archive_pattern_evaluated\.\($supported_archive_formats\)$") 
+      fi
+      export archive
+   else 
+       log_warn "No archive with name $project-$component-$version exists in $directory"
+   fi
+}
+
+###################################################################################################################
+# move_archive function : Move and rename archive if exists
+move_archive(){
+   local directory="$1"
+
+   # Try to get archive with regular pattern name in directory    
+   get_archive "$directory"
+   
+   # If archive doesn't exist try to do a recursive search in directory based on extensions
+   if [ -z "$archive" ]; then 
+	   local archive_count=$(find "$directory" -type f -regex ".*\.\($supported_archive_formats\)$" -print | wc -l)
+	   if [ $archive_count -eq 0 ]; then
+	     log_error "No archive with supported extensions exists in $directory"
+	     onerror
+	   fi
+	   
+	   # If many archives with supported extension
+	   if [ $archive_count -ne 1 ]; then
+	     local archives=$(find "$directory" -type f -regex ".*\.\($supported_archive_formats\)$" -print | tr -s '\n' ' ' )
+	     until [ -n "$archive" ]
+	      do
+	         # Ask question to get archive
+	         echo "Please specify the archive to move to the archives directory (Available(s) archive(s): $archives) :"
+	         read archive
+	         
+	         # Check archive enter exists
+	         local exist=$(contains "$archive" "$archives")
+	         if [ "false" = "$exist" ]; then
+	            log_warn "No archive $archive exists in $directory. Please check your entry ..."
+	            unset archive
+	         fi
+	      done
+	   else 
+	      archive=$(find "$directory" -type f -regex ".*\.\($supported_archive_formats\)$" -print )
+	   fi
+   fi
+	
+   local extension=${archive##*.}
+   # Define extension
+   case "$extension" in
+     gz)    extension="tar.gz";;
+     bz)    extension="tar.bz";;
+      z)     extension="tar.z";;
+      Z)     extension="tar.Z";;
+    bz2)   extension="tar.bz2";;
+   esac
+   local archive_pattern_evaluated=`eval echo "$archive_pattern"`
+   local new_archive="$archives_dir/$archive_pattern_evaluated.$extension"
+   run_command "mv $archive $new_archive" "Moving $archive to $new_archive"
+   archive="$(basename "$new_archive")"
+   export archive
+}
+
+###################################################################################################################
+# load_configuration_from_archive : Check if archive name passed is regular, set project, component, version and load configuration
+load_configuration_from_archive(){
+   local archive=`basename $1`
+   local archive_without_extension=`echo "$archive" | sed "s/\.\($supported_archive_formats\)//g"`
+
+   # Check if archive name define an existing project
+   projects=`ls -r "$acdt_projects_dir" | grep 'project.conf$' | sed s/\-project\.conf//g` 
+   for temp in $projects
+   do
+      local index=`expr match "$archive_without_extension" "$temp"`
+      if [ $index -gt 0 ]; then
+         project=${archive_without_extension:0:$index}
+         let index+=1
+         temp=${archive_without_extension:$index}
+         break
+      fi
+   done
+
+   if [ -n "$project" ]; then
+      # Load project configuration
+      load_project_configuration "$project"
+      
+      # Check if archive exists in archives_dir
+      exist=`ls $archives_dir/$archive 2>&1>/dev/null; echo $?`
+      if [ "0" != "$exist" ]; then
+      	log_error "No archive $archive exists in $archives_dir"
+      	exit 1
+      fi
+      
+      # Check if archive name define an existing component
+      components=`echo -e "$components" | sed "s/ /\n/g" | sort -r`
+      for temp2 in $components
+      do
+         local index=`expr match "$temp" "$temp2"`
+         if [ $index -gt 0 ]; then
+           component=${temp:0:$index}
+           let index+=1
+           version=${temp:$index}
+           break
+         fi
+      done
+   fi 
+
+   # Check if all variable will be set
+   if [ -z "$project" -o -z "$component" -o -z "$version" ]; then
+     log_error "Archive name $archive is not a regular pattern name (Regular : $archive_pattern)."
+     exit 1
+   fi
+}
+
+###################################################################################################################
+# clean function : Count files in a directory with a specific pattern. If they exceed a set value, delete the oldest.
+clean(){
+   keep_file=$1
+   directory=$2
+   pattern=$3
+   if [ -z $pattern ]; then
+      files=$($my_ssh_command ls -1t $directory | tr '\n' ' ')
+   else
+      files=$($my_ssh_command ls -1t $directory | grep $pattern | tr '\n' ' ')
+   fi
+   
+   local k=0
+   IFS=$' '
+   for FILE in $files
+   do
+      if [ $k -ge $keep_file ]; then
+          $my_ssh_command rm -fr "$directory/$FILE"
+      fi
+      let k+=1
+   done
+   unset IFS
+}
+
+# ssh_clean function : Call clean function in ssh to clean remote files or directory
+ssh_clean(){
+  my_ssh_command="$ssh_command"
+  clean $@
+  unset my_ssh_command
+}
+
+###################################################################################################################
+# Utility function to unpack archive in specified formats
+# tar, tar.gz, tgz, tar.bz, tar.z, tar.bz2, tbz, tbz2, zip, war, ear"
+unpack_archive() {
+   local archive_file=$1
+   local archive_folder=${archive_file%/*}
+   local extension=${archive_file##*.}
+
+   # If debug option is set add verbose option
+   if [ -n "$debug" ]; then
+      local verbose="v"
+   fi
+
+   # Define extension
+   case "$extension" in
+      tar)   $my_ssh_command tar  xf$verbose  $archive_file -C $archive_folder;;
+      tgz)   $my_ssh_command tar zxf$verbose  $archive_file -C $archive_folder;;    
+      gz)    $my_ssh_command tar zxf$verbose  $archive_file -C $archive_folder;;
+      bz)    $my_ssh_command tar jxf$verbose  $archive_file -C $archive_folder;;
+      z)     $my_ssh_command tar jxf$verbose  $archive_file -C $archive_folder;;
+      Z)     $my_ssh_command tar jxf$verbose  $archive_file -C $archive_folder;;
+      bz2)   $my_ssh_command tar jxf$verbose  $archive_file -C $archive_folder;;
+      tbz)   $my_ssh_command tar jxf$verbose  $archive_file -C $archive_folder;;
+      tbz2)  $my_ssh_command tar jxf$verbose  $archive_file -C $archive_folder;;
+      zip)   $my_ssh_command unzip -u $archive_file -d $archive_folder;;
+      war)   $my_ssh_command unzip -u $archive_file -d $archive_folder;;
+      ear)   $my_ssh_command unzip -u $archive_file -d $archive_folder;;
+      *)     log_error "The archive compression format is not supported"
+             onerror;;
+   esac
+   unset my_ssh_command
+}
+
+
+# ssh_unpack_archive function : Call unpack_archive function in ssh to unpack remote archive
+ssh_unpack_archive(){
+  my_ssh_command="$ssh_command"
+  unpack_archive $@
+  unset my_ssh_command
+}

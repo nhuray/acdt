@@ -1,0 +1,12 @@
+06e548dfa2f3656b7549fcde878bd74f  usr/bin/acdt-deploy
+ca9cdd58fd45060941fcdc36ad063364  usr/bin/acdt-project
+b53de06c2c4b7d24035d3b14e0c7acd0  usr/bin/acdt-rollback
+24a7b81895d02ebd089bb8d6585f2ef0  usr/share/acdt/acdt-commons-functions
+f9643c7d5d14a3e4920a5c40187755a8  usr/share/acdt/acdt-deploy-functions
+37694677e97d03631d35ddac42bb6e8e  usr/share/acdt/acdt-project-functions
+17eefc7eaf1fa7d6d90e6900ac87d468  usr/share/acdt/acdt-rollback-functions
+c60f57072c15d9bdd385206d0d6b7029  usr/share/doc/acdt/README
+5026110ac0f09a0879d89e2392603219  usr/share/doc/acdt/README.Debian
+54ba42b4d7b4e60d6bef261803530c1d  usr/share/doc/acdt/acdt.txt
+a9b9bfc183ea31cf9e55e30d8319168f  usr/share/doc/acdt/changelog.Debian.gz
+86fdb4b58a4410605ffc8d0708b44a2e  usr/share/doc/acdt/copyright

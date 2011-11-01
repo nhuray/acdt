@@ -1,0 +1,442 @@
+#!/bin/bash
+#
+# ACDT commons functions for acdt scripts
+#
+# Copyright (c) 2008 Nicolas Huray
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 3. Neither the name of the author nor the names of other contributors
+#    may be used to endorse or promote products derived from this software
+#    without specific prior written permission.
+#	
+# THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+###################################################################################################################
+# Commons variables
+acdt_conf_dir=/etc/acdt
+acdt_templates_dir=$acdt_conf_dir/templates
+acdt_projects_dir=$acdt_conf_dir/projects
+acdt_work_dir=$acdt_conf_dir/work
+acdt_rollback_file=$acdt_work_dir/rollback.txt
+acdt_tasks_dir=$acdt_conf_dir/tasks
+acdt_project_template=$acdt_templates_dir/template-project.conf
+datetime=`date +%Y%m%d%H%M%S`
+start=`date +%s`
+
+# Export useful variables
+export status="UNDEFINED"
+export archive_pattern="\$project-\$component-\$version"
+export supported_archive_formats="tar\|tar\.gz\|tgz\|tar\.bz\|tar\.z\|tar\.bz2\|tbz\|tbz2\|zip\|war\|ear"
+
+# setup function : check if acdt directory are created
+setup(){
+  if [ ! -d $acdt_templates_dir ]; then
+     log_error " Acdt templates directory doesn't exist. Please reinstall acdt"
+  fi
+  if [ ! -d $acdt_projects_dir ]; then
+     mkdir -p $acdt_projects_dir
+  fi
+  if [ ! -d $acdt_work_dir ]; then
+     mkdir -p $acdt_work_dir
+  fi
+}
+
+###################################################################################################################
+# Logging Functions: Levels Availables : NOTICE, DEBUG, INFO, WARN, ERROR
+log_notice(){
+ echo -e "$@"
+}
+
+log_debug(){
+ if [ -n "$debug" ]; then
+   echo -e "[DEBUG] $@"
+ fi
+}
+
+log_info(){
+ echo -e "[INFO] $@"
+}
+
+log_warn(){
+ echo -e "[WARN] $@"
+}
+
+log_error(){
+ echo -e "[ERROR] $@"
+}
+
+
+###################################################################################################################
+# load_project_configuration function : Load project configuration file passed in parameter
+load_project_configuration(){
+   project="$1"
+   # Load project configuration file
+   if [ -n "$project" ]; then
+     conf_file=$acdt_projects_dir/$project-project.conf
+     if [ ! -r $conf_file ]; then
+       log_error "Unable to load configuration of project '$project'. Please check your entry..." 
+       exit 1;
+     fi
+     temp_file=/tmp/$project-project.conf
+     #cat $conf_file | dos2unix | sed -re "s/'//g" | sed -e 's/"//g' | sed -re 's/=(.*)/="\1"/g'  > $temp_file
+     cat $conf_file | dos2unix | sed -e 's/"//g' | sed -re 's/=(.*)/="\1"/g'  > $temp_file
+     source $temp_file
+     rm $temp_file
+
+     # Define list of properties keys
+     properties_keys=$(cat $acdt_project_template | dos2unix | sed '/^#/d' | sed '/^$/d' | cut -d"=" -f1 )
+     # Define map of properties
+     properties_map=$(cat $conf_file | dos2unix | sed '/^#/d' | sed '/^$/d' | sed -e 's/"//g' | sed -re 's/(.*)=(.*)/\1=\2\n/g' )
+     #properties_map=$(cat $conf_file | dos2unix | sed '/^#/d' | sed '/^$/d' | sed -re "s/'//g" | sed -e 's/"//g' | sed -re 's/(.*)=(.*)/\1=\2\n/g' )
+
+     # Get all properties and export them
+     export components=$(eval_property "components" )
+     export environments=$(eval_property "environments" )
+     export work_dir=$(eval_property "work_dir" )
+     export log_dir=$(eval_property "log_dir" )
+     export archives_dir=$(eval_property "archives_dir" )
+     export keep_archives=$(eval_property "keep_archives" )
+     export reports_dir=$(eval_property "reports_dir" )
+     export keep_reports=$(eval_property "keep_reports" )
+     export scm_task=$(eval_property "scm_task" )   
+     export build_task=$(eval_property "build_task" )
+     export pre_deploy_task=$(eval_property "pre_deploy_task" )
+     export deploy_dir=$(eval_property "deploy_dir" )
+     export deploy_symlink=$(eval_property "deploy_symlink" )
+     export deploy_servers=$(eval_property "deploy_servers" )
+     export unpack_archive=$(eval_property "unpack_archive")
+     export deploy_servers=$(eval_property "deploy_servers" )
+     export dir_chmod=$(eval_property "dir_chmod" )
+     export dir_chown=$(eval_property "dir_chown" )
+     export file_chmod=$(eval_property "file_chmod" )
+     export file_chown=$(eval_property "file_chown" )    
+     export keep_releases=$(eval_property "keep_releases" )
+     export post_deploy_task=$(eval_property "post_deploy_task" ) 
+     export pre_rollback_task=$(eval_property "pre_rollback_task" )
+     export post_rollback_task=$(eval_property "post_rollback_task" )    
+  fi
+}
+
+
+
+###################################################################################################################
+# eval_property function : Search and eval property passed in parameter
+# Return property value if property exists in default configuration file
+eval_property(){
+   property=$1
+   # Search component environment property
+   if [ -n "$environment" -a -n "$component"  ]; then
+     property_key="$component"_"$environment"_"$property"
+     property_key=$(echo "$property_key" | tr "-" "_")
+     property_value=$(eval echo \$$property_key)
+     if [ -n "$property_value" ]; then
+       echo "$property_value"
+       return 0
+     fi
+   fi
+
+   # Search component property
+   if [ -n "$component" ]; then
+     property_key="$component"_"$property"
+     property_key=$(echo "$property_key" | tr "-" "_")
+     property_value=$(eval echo \$$property_key)
+     if [ -n "$property_value" ]; then
+       echo "$property_value"
+       return 0
+     fi
+   fi
+
+   # Search environment property
+   if [ -n "$environment" ]; then
+     property_key="$environment"_"$property"
+     property_key=$(echo "$property_key" | tr "-" "_")
+     property_value=$(eval echo \$$property_key)
+     if [ -n "$property_value" ]; then
+       echo "$property_value"
+       return 0
+     fi
+   fi
+
+   # Search project property
+   property_key="$property"
+   property_value=$(eval echo \$$property_key)
+   if [ -n "$property_value" ]; then
+     echo "$property_value"
+     return 0
+   fi
+}
+
+###################################################################################################################
+# get_properties_keys function : get a list of all properties keys contained in configuration file 
+get_properties_keys(){
+   project=$1
+   if [ -z "$properties_keys" ]; then
+     load_project_configuration "$project"
+   fi
+   echo "$properties_keys"
+}
+
+# get_property : get non evaluated value of property passed in parameter
+get_property(){
+  project=$1
+  property=$2
+  if [ -z "$properties_map" ]; then
+    load_project_configuration "$project"
+  fi
+  IFS=$'\n';
+  property_value=$(echo "$properties_map" | grep -e "^$property" | cut -d"=" -f2)
+  unset IFS
+  echo "$property_value"
+}
+
+###################################################################################################################
+# run_command function : Execute a command and print message. If error occurs she will be trapped
+run_command(){
+   # Handle errors
+   set -o errexit
+   # We trap error 
+   trap onerror ERR
+   local command=$1
+   local message=$2
+   if [ -n "$message" ]; then
+      log_info "$message"  | tee -a "$report"
+   fi
+   # Run command
+   $command 2>&1
+   # We stop trap error
+   trap - ERR
+}
+
+###################################################################################################################
+# launch_report_task function : Launch report task if exists
+launch_report_task(){
+   # Reload project configuration
+   load_project_configuration "$project"
+   report_task=$(eval_property "report_task" )
+   if [ -n "$report_task" ]; then
+      local lower_action=$(echo "$action" | tr "[:upper:]" "[:lower:]")
+      log_notice "[$lower_action:report_task]"
+      log_info "Launching report task :  $report_task"
+      eval $report_task 2>&1
+   fi
+}
+
+###################################################################################################################
+# is_project_exist function : Return true if project configuration file exist, false otherwise
+is_project_exist(){
+   project=$1
+   if [ -z "$project" ]; then 
+     echo "false"
+     return 0
+   fi
+   exist=$(ls "$acdt_projects_dir" | grep -e "^$project-project.conf$")
+   if [ -z "$exist" ]; then
+      echo "false"
+      return 0
+   fi
+   echo "true"
+}
+
+###################################################################################################################
+# contains function : Check if first parameter is contained in list passed in second parameter
+# List must have the pattern : "element1 , element2, ..."
+# Return "true" if list contains element "false" otherwise
+contains(){
+   search_element=$1
+   elements=$2
+   IFS=$' '
+   for element in $elements
+   do
+     if [ "$element" = "$search_element" ]; then
+       echo "true"
+       return 0
+     fi
+  done
+  unset IFS
+  echo "false"
+}
+
+###################################################################################################################
+# get_project function : Ask for project and set 'project' variable
+get_project(){
+   until [ -n "$project" ]
+   do
+     # Check for existing projects configuration files
+     projects=`ls "$acdt_projects_dir" | grep 'project.conf$' | sed s/\-project\.conf//g | tr '\n' ' '`
+     if [ -z "$projects" ]; then
+       log_warn "No projects are configured. Please create your project with the command : acdt-project create my-project"
+       exit 1
+     fi
+
+     # Ask question to get project
+     echo "Please specify the name of your project (Available(s) Project(s): $projects) :"
+     read project
+
+     # Check if project exists   
+     exist=$(is_project_exist "$project")
+     if [ "false" = "$exist" ]; then
+       if [ -z "$project" ]; then
+          log_warn "No project $project are configured. Please check your entry or create your project with the command : acdt-project create my-project"
+       else
+          log_warn "No project $project are configured. Please check your entry or create your project '$project' with the command : acdt-project create $project"
+       fi
+       unset project
+     fi
+   done
+   export project
+}
+
+###################################################################################################################
+# get_component function : Ask for component name bind to the project and set 'component' variable
+get_component(){
+   project="$1"
+   if [ -z "$components"  ]; then 
+      log_warn "No applicative components are configured. Please edit '$project' configuration with the command : acdt-project edit  $project"
+      exit 1;
+   fi
+
+   until [ -n "$component" ]
+   do
+      # Ask question to get component variable
+      echo "Please specify the applicative component you want to deploy (Available(s) component(s): $components) :"
+      read component
+   
+      # Check if component exists 
+      exist=$(contains "$component" "$components")
+      if [ "false" = "$exist" ]; then
+        log_warn "No applicative component '$component' is configured. Please check your entry or edit '$project' project configuration with the command : acdt-project edit $project"
+        unset component
+      fi
+   done
+   export component
+}
+
+###################################################################################################################
+# get_environment function : Ask for environment ant set 'environment' variable
+get_environment(){
+   project="$1"
+   if [ -z "$environments"  ]; then 
+      log_warn "No environments are configured. Please edit '$project' project configuration with the command : acdt-project edit $project"
+      exit 1;
+   fi
+
+   until [ -n "$environment" ]
+   do
+      # Ask question to get environment variable
+      echo "Please specify the environment where you deploy (Available(s) environment(s): $environments) :"
+      read environment
+
+      # Check if environment exists 
+      exist=$(contains "$environment" "$environments")
+      if [ "false" = "$exist" ]; then
+         log_warn "No environment '$environment' are configured. Please check your entry or edit '$project' project configuration with the command : acdt-project edit $project"
+         unset environment
+      fi
+   done
+   export environment
+}
+
+###################################################################################################################
+# is_localhost : Return true if server passed in parameter is localhost
+is_localhost(){
+ server="$1"
+ local_servers="localhost 127.0.0.1 `hostname`"
+ local=$(contains "$server" "$local_servers")
+ echo "$local"
+}
+
+###################################################################################################################
+
+# onsuccess function : Display on success status and exit 0
+onsuccess(){
+  set +x
+  export status="SUCCESSFUL"
+  # Create rollback file if the component has been successful deploy at least on one server
+  create_rollback_file
+  # Launch report task if exists
+  launch_report_task
+  log_info "------------------------------------------------------------------------"  | tee -a "$report"
+  log_info "$action $status"                                                           | tee -a "$report"
+  end=`date +%s`
+  log_info  "------------------------------------------------------------------------" | tee -a "$report"
+  log_info  "Total time: `expr $end - $start` seconds"                                 | tee -a "$report"
+  log_info  "Finished at: `date '+%a %b %d %T %Z %Y'`"                                 | tee -a "$report"
+  log_info  "------------------------------------------------------------------------" | tee -a "$report"
+  exit 0
+}
+
+# onerror function : Display status on error and exit 1
+onerror(){
+  set +x
+  export status="FAILURE"
+  # Create rollback file if the component has been successful deploy at least on one server
+  create_rollback_file
+  # Launch report task if exists
+  launch_report_task
+  log_info  "------------------------------------------------------------------------" | tee -a "$report"
+  log_error "$action $status"                                                          | tee -a "$report"
+  end=`date +%s`
+  log_info  "------------------------------------------------------------------------" | tee -a "$report"
+  log_info  "Total time: `expr $end - $start` seconds"                                 | tee -a "$report"
+  log_info  "Finished at: `date '+%a %b %d %T %Z %Y'`"                                 | tee -a "$report"
+  log_info  "------------------------------------------------------------------------" | tee -a "$report"
+  exit 1
+}
+
+# onabort function : Display on abort status and exit 2
+onabort(){
+  set +x
+  export status="ABORTED"
+  # Create rollback file if component has been successful deploy on a servers at least
+  create_rollback_file
+  log_info  "------------------------------------------------------------------------" | tee -a "$report"
+  log_error "$action $status"                                                          | tee -a "$report"
+  end=`date +%s`
+  log_info  "------------------------------------------------------------------------" | tee -a "$report"
+  log_info  "Total time: `expr $end - $start` seconds"                                 | tee -a "$report"
+  log_info  "Finished at: `date '+%a %b %d %T %Z %Y'`"                                 | tee -a "$report"
+  log_info  "------------------------------------------------------------------------" | tee -a "$report"
+  exit 2
+}
+
+
+###################################################################################################################
+# create_rollback_file function : Create a file to make rollback
+create_rollback_file(){
+   if [ -n "$successful_servers" ]; then
+      if [ ! -d "$acdt_work_dir" ]; then
+         mkdir -p "$acdt_work_dir"
+         acdt_rollback_file=$acdt_work_dir/rollback.txt
+      fi
+      touch $acdt_rollback_file
+      log_info "Creating rollback file $acdt_rollback_file"
+      echo "project=$project"            >  $acdt_rollback_file
+      echo "component=$component"        >> $acdt_rollback_file
+      echo "environment=$environment"    >> $acdt_rollback_file
+      echo "servers=$successful_servers" >> $acdt_rollback_file
+      echo "current_version=$version"    >> $acdt_rollback_file
+      echo "previous_version=$previous_version"   >> $acdt_rollback_file
+   fi
+}
+
+###################################################################################################################
+
+# Launch setup function
+setup
