@@ -30,7 +30,8 @@ uninstall:
 	rm -rf /usr/share/doc/acdt
 
 deb:
-	debuild -sa
+	debuild -uc -us
+#	debuild -sa
 
 deb-clean:
 	fakeroot debian/rules clean
