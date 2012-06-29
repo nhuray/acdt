@@ -30,8 +30,8 @@
 # SUCH DAMAGE.
 
 # Check if lib exists
-if [ -f /usr/local/lib/acdt/acdt-commons-functions ]; then
-   . /usr/local/lib/acdt/acdt-commons-functions
+if [ -f /usr/share/acdt/acdt-commons-functions ]; then
+   . /usr/share/acdt/acdt-commons-functions
 else
    echo "[ERROR] Unable to load acdt-commons-functions. Please reinstall acdt"
    exit 1
