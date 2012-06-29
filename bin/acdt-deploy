@@ -42,8 +42,8 @@ if [ `id -u` -ne 0 ]; then
 fi
 
 # Check if lib exists
-if [ -f /usr/local/lib/acdt/acdt-deploy-functions ]; then
-   . /usr/local/lib/acdt/acdt-deploy-functions
+if [ -f /usr/share/acdt/acdt-deploy-functions ]; then
+   . /usr/share/acdt/acdt-deploy-functions
 else
    echo "[ERROR] Unable to load acdt-deploy-functions. Please reinstall acdt"
    exit 1
